@@ -38,7 +38,7 @@ jobs:
           [ "$(jq -r .isCrossRepository <<<"$info")" = false ] || { echo "::error::フォークからのPRは対象外です"; exit 1; }
           echo "head=$(jq -r .headRefName <<<"$info")" >> "$GITHUB_OUTPUT"
           echo "base=$(jq -r .baseRefName <<<"$info")" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.pr.outputs.head }}
           token: ${{ steps.app.outputs.token }}

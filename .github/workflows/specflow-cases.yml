@@ -33,7 +33,7 @@ jobs:
         with:
           app-id: ${{ vars.SPECFLOW_APP_ID }}
           private-key: ${{ secrets.SPECFLOW_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           token: ${{ steps.app.outputs.token }}
           fetch-depth: 0

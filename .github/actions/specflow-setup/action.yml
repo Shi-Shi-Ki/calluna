@@ -10,7 +10,7 @@ runs:
         echo "node=$(jq -r '.nodeVersion // "26"' specflow.config.json)" >> "$GITHUB_OUTPUT"
         echo "php=$(jq -r '.phpVersion // ""' specflow.config.json)" >> "$GITHUB_OUTPUT"
     # specflow のスクリプトは Node で動くので、どの言語でも Node は入れる
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v5
       with:
         node-version: ${{ steps.cfg.outputs.node }}
     - if: steps.cfg.outputs.setup == 'php'

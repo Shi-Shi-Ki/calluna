@@ -1,6 +1,7 @@
 # ケース表とテストの検証。ブランチ保護で必須チェックにする（ジョブ名: specflow / verify）。
-#   承認前（承認タグなし）: 追加・変更されたケースが「失敗」すること（Red の確認）
-#   承認後（承認タグあり）: 全ケースが「成功」し、承認後に specs/ tests/ などが変わっていないこと
+#   ケース表PR（ブランチ specflow/issue-*）の承認前: 追加・変更されたケースが「失敗」すること（Red の確認）
+#   ケース表PRの承認後（承認タグあり）: 全ケースが「成功」し、承認後に specs/ tests/ などが変わっていないこと
+#   それ以外のPRと main: 全ケースが「成功」すること（回帰テスト）
 name: specflow
 on:
   pull_request:
@@ -16,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
@@ -31,8 +32,10 @@ jobs:
         env:
           PR: ${{ github.event.pull_request.number }}
           BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          if [ -z "$PR" ]; then echo "mode=green" >> "$GITHUB_OUTPUT"; exit 0; fi
+          # Red の確認は /cases が作ったケース表PRだけ。それ以外は通常の回帰テスト
+          if [ -z "$PR" ] || [[ "$HEAD_REF" != specflow/issue-* ]]; then echo "mode=green" >> "$GITHUB_OUTPUT"; exit 0; fi
           TAG="specflow/approved/pr-$PR"
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "mode=green" >> "$GITHUB_OUTPUT"
