@@ -29,7 +29,7 @@ GitHub Issue の日本語の仕様から、AI がケース表とテストを作�
 | `specflow/bin/usage.mjs` | AIのターン数・所要時間・API換算額をコメントに添える |
 | `specflow/bin/leadtime.sh` | Issue作成〜マージのリードタイムを GitHub の記録から出す |
 | `specflow/prompts/*.md` | `/cases` と `/implement` のプロンプト |
-| `CLAUDE.md` / `.claude/settings.json` / `.claude/hooks/guard-cases.sh` | ルールと hook（VS Code でも CI でも同じものが効く） |
+| `.claude/rules/specflow.md` / `.claude/settings.json` / `.claude/hooks/guard-cases.sh` | ルールと hook（VS Code でも CI でも同じものが効く）。`CLAUDE.md` は cosmos の `team-init` に任せる |
 | `.github/CODEOWNERS` | `specs/` `tests/` `.claude/` `.github/` の変更に人の承認を必須に |
 | `specs/1-overdue-reminder/` `src/overdue.js` `tests/` | GAS の見本（期限切れ申請の督促リスト、9ケース） |
 | `metrics/poc-log.csv` | 人の時間と費用の記録表 |

@@ -1,4 +1,6 @@
-# このリポジトリの開発フロー（仕様書駆動のテスト合意）
+# specflow: 仕様書駆動のテスト合意フロー
+
+<!-- calluna（specflow）で管理。CLAUDE.md・REVIEW.md・team-*.md は cosmos の管轄なので、ここに書かない -->
 
 人は「何が正しいか（仕様と例）」を決め、最終判断をする。AIは生成し、CIが機械的に検証する。
 テストは「人とAIの合意を、実行できる形で残したもの」。自動化そのものは目的にしない。
@@ -8,7 +10,7 @@
 2. ケース表（`/cases`）: `specs/<Issue番号>-<slug>/cases.yaml` とテスト、実装のスタブを作る。`cases.md` は生成物。
 3. 承認: 人が PR の `cases.md` を読み、ラベル `cases:approved` を付ける。この時点のコミットが「合意」。
 4. 実装（`/implement`）: テストを通す実装を書く。**`specs/` と `tests/` は変更しない。**
-5. CI・レビュー・人の受け入れ確認（`cases.md` の「人が確認する項目」）。
+5. CI・レビュー・人の受け入れ確認（`cases.md` の「人が確認する項目」）。コードレビューは cosmos の `@claude review` で行い、specflow は行わない。
 
 ## ケース表のルール（フェーズ2）
 - ID は `TC<Issue番号>-<2桁>`。仮定は `A<Issue番号>-<n>`、人の確認項目は `M<Issue番号>-<2桁>`。
@@ -29,5 +31,5 @@
 - clasp 2.x の TS（ts2gas）では `import` / `export` を使わない。Node から読むために末尾で `if (typeof module !== 'undefined') module.exports = {...}` を使う。
 
 ## 実装フェーズでの禁止事項
-- `specs/`、`tests/`、`.claude/`、`.github/`、`CLAUDE.md` を変更しない（hook と CI で止まる）。
+- `specs/`、`tests/` を変更しない（hook と CI で止まる）。CI 上では `.claude/`、`.github/`、`CLAUDE.md` も変更しない。
 - テストが仕様と矛盾していると考えたら、変更せずに最終報告に「ケース表への指摘」として書く。人が仕様変更として判断する。

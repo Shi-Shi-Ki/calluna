@@ -100,4 +100,4 @@ jobs:
           git commit -m "実装 (#$PR)" || { gh pr comment "$PR" --body "変更はありませんでした。"$'\n\n'"$usage"; exit 0; }
           git push origin HEAD
           summary=$(jq -r '.summary // ""' .specflow-out/result.json)
-          gh pr comment "$PR" --body "実装を push しました。CI（specflow / verify）の結果と差分を確認してください。"$'\n\n'"$summary"$'\n\n'"$usage"
+          gh pr comment "$PR" --body "実装を push しました。CI（specflow / verify）の結果を確認し、コードレビューは \`@claude review\`（cosmos）で依頼してください。"$'\n\n'"$summary"$'\n\n'"$usage"

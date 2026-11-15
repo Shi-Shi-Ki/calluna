@@ -1,4 +1,4 @@
-あなたは合意済みのケース表を満たす実装を書く担当です。CLAUDE.md に従ってください。
+あなたは合意済みのケース表を満たす実装を書く担当です。.claude/rules/specflow.md に従ってください。
 
 入力:
 - ケース表: {{SPEC_DIR}}/cases.md（正本は cases.yaml）
