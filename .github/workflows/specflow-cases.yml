@@ -1,0 +1,126 @@
+# Issue に「/cases」とコメント → AI がブロッカーを質問するか、ケース表PRを作る。
+# 必要なもの:
+#   secrets.CLAUDE_CODE_OAUTH_TOKEN  Team シートで `claude setup-token` して作ったトークン
+#   vars.SPECFLOW_APP_ID / secrets.SPECFLOW_APP_PRIVATE_KEY
+#     PR を作って CI を動かすための GitHub App（GITHUB_TOKEN で作った PR では CI が動かないため）
+#   vars.SPECFLOW_MODEL（任意）  使うモデル。未設定ならプランの既定
+name: specflow-cases
+on:
+  issue_comment:
+    types: [created]
+permissions: {}
+concurrency:
+  group: specflow-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  cases:
+    if: >-
+      !github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/cases') &&
+      contains(github.event.issue.labels.*.name, 'spec') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      N: ${{ github.event.issue.number }}
+      BRANCH: specflow/issue-${{ github.event.issue.number }}
+      SPECFLOW_PHASE: author # hook: specs/ tests/ の作成を許可（.claude/ .github/ は常に不可）
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SPECFLOW_APP_ID }}
+          private-key: ${{ secrets.SPECFLOW_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+      - name: ブランチの用意（2回目以降は既存のケース表PRを更新）
+        run: |
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+      - uses: ./.github/actions/specflow-setup
+      - name: 仕様（Issue本文とコメント）を取り出す
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          mkdir -p .specflow-out
+          gh issue view "$N" --json title,body,comments \
+            --jq '"# " + .title + "\n\n" + .body + "\n\n## コメント\n" + ([.comments[] | "\n### " + .author.login + "\n" + .body] | join("\n"))' \
+            > .specflow-out/issue.md
+          {
+            echo 'PROMPT<<__EOF__'
+            sed -e "s|{{ISSUE_FILE}}|.specflow-out/issue.md|g" \
+                -e "s|{{ISSUE_NUMBER}}|$N|g" \
+                -e "s|{{TEST_COMMAND}}|$(jq -r .testCommand specflow.config.json)|g" specflow/prompts/cases.md
+            echo '__EOF__'
+          } >> "$GITHUB_ENV"
+
+      - id: claude
+        uses: anthropics/claude-code-action@v1 # 導入時にコミットSHAで固定し、同梱の Claude Code の版を記録する
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: ${{ env.PROMPT }}
+          claude_args: >-
+            --max-turns 40
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,Bash(npm test:*),Bash(npm run test:*),Bash(npx vitest:*),Bash(vendor/bin/phpunit:*),Bash(vendor/bin/pest:*)"
+            ${{ vars.SPECFLOW_MODEL && format('--model {0}', vars.SPECFLOW_MODEL) || '' }}
+
+      - name: 結果の反映（質問を返す / ケース表PRを作る）
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          EXEC: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          usage=$(node specflow/bin/usage.mjs "$EXEC" || true)
+          status=$(jq -r '.status // "missing"' .specflow-out/result.json 2>/dev/null || echo missing)
+
+          if [ "$status" = blocked ]; then
+            body=$(jq -r '"仕様に、決めてもらう必要がある点があります。Issue本文を直すか、このIssueにコメントで回答してから、もう一度 `/cases` とコメントしてください。\n\n" + ([.blockers[] | "- **" + .id + "** " + .question + "\n  - 理由: " + .why + (if .options then "\n  - 候補: " + (.options | join(" / ")) else "" end)] | join("\n"))' .specflow-out/result.json)
+            gh issue comment "$N" --body "$body"$'\n\n'"$usage"
+            gh issue edit "$N" --add-label "spec:blocked"
+            exit 0
+          fi
+          if [ "$status" != ready ]; then
+            gh issue comment "$N" --body "ケース表を作れませんでした（status: $status）。Actions のログを確認してください。"$'\n\n'"$usage"
+            exit 1
+          fi
+
+          # ガードレールに触れていないこと（hook をすり抜けた場合の保険）
+          if git status --porcelain -- .github .claude CLAUDE.md specflow | grep -q .; then
+            echo "::error::.github/ .claude/ CLAUDE.md specflow/ が変更されています。中止します。"; exit 1
+          fi
+          spec_dir=$(jq -r .spec_dir .specflow-out/result.json)
+          node specflow/bin/render-cases.mjs
+          git config user.name "specflow[bot]"
+          git config user.email "specflow-bot@users.noreply.github.com"
+          git add -A
+          git commit -m "ケース表とテストを作成 (#$N)" || { echo "変更なし"; exit 0; }
+          git push -u origin "$BRANCH"
+
+          gh issue edit "$N" --remove-label "spec:blocked" || true
+          {
+            echo "Refs #$N"
+            echo
+            echo "## レビューしてほしいもの"
+            echo "テストコードではなく、下のケース表（\`$spec_dir/cases.md\`）です。問題なければラベル **cases:approved** を付けてください。直したい場合は Issue の仕様を直して \`/cases\` をもう一度、またはこの PR にコメントしてください。"
+            echo
+            sed '1,/^- 仕様:/d' "$spec_dir/cases.md"
+            echo
+            echo "## 自動化の線引き（AIの提案）"
+            jq -r '(.automation // [])[] | "- [" + .how + "] " + .item + "（" + .reason + "／準備: " + .cost + "）"' .specflow-out/result.json
+            echo
+            echo "$usage"
+          } > .specflow-out/pr.md
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" --body-file .specflow-out/pr.md
+            gh pr comment "$BRANCH" --body "ケース表を更新しました。差分を確認してください。"
+          else
+            gh pr create --head "$BRANCH" --title "[ケース表] #$N $(gh issue view "$N" --json title --jq .title)" \
+              --body-file .specflow-out/pr.md --label "cases:review"
+          fi

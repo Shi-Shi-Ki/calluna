@@ -1,0 +1,119 @@
+name: 仕様書（テスト合意フロー）
+description: 仕様を書くと、AIがケース表とテストを作ります。コメント「/cases」で開始します。
+title: "[仕様] "
+labels: ["spec"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        書けるところだけで構いません。曖昧な点はAIが「ブロッカー」と「仮定」に分けて返します。
+        **例の表（入力と期待結果）を1つでも書くと、ケース表の精度が大きく上がります。**
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 1. 目的
+      description: 誰の、どんな手間や問題を解決するか。1〜3行。
+      placeholder: 総務が毎朝目で探している「期限切れの未処理申請」を一覧にし、督促漏れをなくす。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: 2. リスク（テストの厳しさを決めます）
+      options:
+        - 低（使い捨て・読むだけ。テストは書かない）
+        - 中（社内の業務データを書き換える）
+        - 高（金額・個人情報・外部への送信・削除を含む）
+    validations:
+      required: true
+
+  - type: textarea
+    id: runtime
+    attributes:
+      label: 3. 実行環境とバージョン
+      description: 言語とバージョン、実行方法（手動・トリガー・cronなど）。バージョンが分からない場合は「不明」と書いてください。
+      placeholder: |
+        GAS（V8）/ clasp 3.4 / Node 26（テスト用）/ Vitest 5
+        実行: 時間主導トリガー 毎朝7時
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: 4. 入力（シートやファイルの構成）
+      description: シート名、ヘッダー行の位置、列のヘッダー名・型・必須かどうか。列は「位置」ではなく「ヘッダー名」で特定します。
+      value: |
+        - ファイル / シート名:
+        - ヘッダー行: 1行目
+        | ヘッダー名 | 型（文字列/数値/日付/真偽） | 必須 | 例 | 備考 |
+        | --- | --- | --- | --- | --- |
+        |  |  |  |  |  |
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: 5. 出力先
+      description: どこに、何を、どう書くか（上書き / 追記 / クリアして書き直し）。通知やメールなどの副作用もここに書きます。
+      value: |
+        - 出力先（シート名・範囲など）:
+        - 書き方: 上書き / 追記 / クリアして書き直し
+        - 並び順:
+        | ヘッダー名 | 内容 |
+        | --- | --- |
+        |  |  |
+        - 副作用（メール・通知・共有・外部API）: なし
+    validations:
+      required: true
+
+  - type: textarea
+    id: rules
+    attributes:
+      label: 6. 業務ルール
+      description: 番号を付けてください。ケース表の「仕様の該当箇所」はこの番号を参照します（例：ルール2）。
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: 7. 例の表（入力 → 期待結果）
+      description: 代表的な例と、迷いそうな例を書いてください。AIはこの表を必ずケースに含めます。
+      value: |
+        | # | 入力（前提） | 操作 | 期待結果 |
+        | --- | --- | --- | --- |
+        | 1 |  |  |  |
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: 8. 異常時の挙動
+      description: 構造が想定と違う、値が壊れている、権限がない、同時に実行された、などのときにどうするか。原則は「何も書かずに止めて知らせる」です。
+      value: |
+        - ヘッダーが見つからない / 列が足りない: 何も書かずに停止し、エラーを通知
+        - 値が不正（空、#REF!、型違い）:
+        - 権限がない:
+        - 同時実行:
+        - 通知先:
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: 9. 保証しない範囲
+      description: 今回やらないこと、対象外のデータ、性能の上限など。書いておくとAIが余計なケースを作りません。
+      placeholder: |
+        - 1万行を超える場合の性能
+        - 督促メールの送信（別Issue）
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 10. 人が確認すること（受け入れ）
+      description: 見た目、使い勝手、本番データでの確認など、機械で判定できないもの。AIが追加の提案をします。

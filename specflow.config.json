@@ -1,0 +1,8 @@
+{
+  "$comment": "言語ごとの差はこのファイルだけに閉じ込める。setup: node | php",
+  "setup": "node",
+  "nodeVersion": "26",
+  "install": "npm ci",
+  "testCommand": "npm run test:ci",
+  "junit": ["reports/junit.xml"]
+}

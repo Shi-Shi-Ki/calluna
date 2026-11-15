@@ -1,0 +1,8 @@
+# ケース表・テスト・ガードレールの変更は「仕様の変更」。人の承認を必須にする。
+# ブランチ保護（またはルールセット）で "Require review from Code Owners" を有効にすること。
+/specs/        @Shi-Shi-Ki
+/tests/        @Shi-Shi-Ki
+/.claude/      @Shi-Shi-Ki
+/.github/      @Shi-Shi-Ki
+/CLAUDE.md     @Shi-Shi-Ki
+/specflow/     @Shi-Shi-Ki

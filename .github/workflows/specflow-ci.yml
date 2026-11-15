@@ -1,0 +1,68 @@
+# ケース表とテストの検証。ブランチ保護で必須チェックにする（ジョブ名: specflow / verify）。
+#   承認前（承認タグなし）: 追加・変更されたケースが「失敗」すること（Red の確認）
+#   承認後（承認タグあり）: 全ケースが「成功」し、承認後に specs/ tests/ などが変わっていないこと
+name: specflow
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: specflow-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - run: git fetch --force --tags origin
+      - uses: ./.github/actions/specflow-setup
+
+      - name: ケース表の検証と cases.md の同期確認
+        run: node specflow/bin/render-cases.mjs --check
+
+      - name: フェーズの判定
+        id: phase
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ -z "$PR" ]; then echo "mode=green" >> "$GITHUB_OUTPUT"; exit 0; fi
+          TAG="specflow/approved/pr-$PR"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "mode=green" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=red" >> "$GITHUB_OUTPUT"
+            echo "base=origin/$BASE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 承認後のロック検査
+        if: steps.phase.outputs.tag != ''
+        env:
+          TAG: ${{ steps.phase.outputs.tag }}
+        run: |
+          changed=$(git diff --name-only "$TAG" HEAD -- specs tests .claude .github CLAUDE.md specflow specflow.config.json)
+          if [ -n "$changed" ]; then
+            echo "::error::承認（$(git rev-parse --short "$TAG")）の後に、合意済みのファイルが変更されました。仕様の変更として、ラベル cases:approved を外して付け直してください。"
+            echo "$changed"
+            exit 1
+          fi
+
+      - name: テストの実行
+        run: eval "$(jq -r '.testCommand' specflow.config.json)" || true
+
+      - name: ケース表とテスト結果の突き合わせ
+        env:
+          MODE: ${{ steps.phase.outputs.mode }}
+          BASE: ${{ steps.phase.outputs.base }}
+        run: |
+          args=()
+          for f in $(jq -r '.junit[]' specflow.config.json); do args+=(--junit "$f"); done
+          [ "$MODE" = red ] && args+=(--red-from "$BASE")
+          node specflow/bin/check-report.mjs "${args[@]}"
