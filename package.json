@@ -1,0 +1,18 @@
+{
+  "name": "specflow-gas-poc",
+  "private": true,
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:ci": "vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml",
+    "cases:render": "node specflow/bin/render-cases.mjs",
+    "cases:check": "node specflow/bin/render-cases.mjs --check",
+    "specflow:report": "node specflow/bin/check-report.mjs"
+  },
+  "devDependencies": {
+    "vitest": "^5.1.0",
+    "yaml": "^2.9.1"
+  }
+}

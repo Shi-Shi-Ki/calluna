@@ -1,0 +1,25 @@
+name: specflow-setup
+description: specflow.config.json に従って言語ランタイムを準備し、依存を入れる
+runs:
+  using: composite
+  steps:
+    - id: cfg
+      shell: bash
+      run: |
+        echo "setup=$(jq -r '.setup' specflow.config.json)" >> "$GITHUB_OUTPUT"
+        echo "node=$(jq -r '.nodeVersion // "26"' specflow.config.json)" >> "$GITHUB_OUTPUT"
+        echo "php=$(jq -r '.phpVersion // ""' specflow.config.json)" >> "$GITHUB_OUTPUT"
+    # specflow のスクリプトは Node で動くので、どの言語でも Node は入れる
+    - uses: actions/setup-node@v5
+      with:
+        node-version: ${{ steps.cfg.outputs.node }}
+    - if: steps.cfg.outputs.setup == 'php'
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ steps.cfg.outputs.php }}
+        coverage: none
+    - shell: bash
+      run: |
+        # specflow 自体の依存（yaml）。Node のプロジェクトでは npm ci で入る
+        if [ ! -f package.json ]; then npm install --no-save --no-package-lock yaml@2; fi
+        eval "$(jq -r '.install' specflow.config.json)"

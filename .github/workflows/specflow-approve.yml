@@ -1,0 +1,53 @@
+# ラベル cases:approved を付ける → その時点のコミットを「合意」として承認タグに記録する。
+# ラベルを外す → 承認タグを消す（ケース表を直してから付け直す）。
+name: specflow-approve
+on:
+  pull_request:
+    types: [labeled, unlabeled]
+permissions: {}
+jobs:
+  record:
+    if: github.event.label.name == 'cases:approved' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+      TAG: specflow/approved/pr-${{ github.event.pull_request.number }}
+      ACTOR: ${{ github.event.sender.login }}
+    steps:
+      - name: 承認者の権限を確認（write 以上の人間だけ）
+        if: github.event.action == 'labeled'
+        run: |
+          perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" --jq .permission)
+          if [[ "$ACTOR" == *"[bot]" || ! "$perm" =~ ^(admin|maintain|write)$ ]]; then
+            gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --remove-label cases:approved
+            gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "承認できるのは write 権限以上の人だけです（$ACTOR: $perm）。"
+            exit 1
+          fi
+      - name: Red の確認が済んでいるか
+        if: github.event.action == 'labeled'
+        run: |
+          ok=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?check_name=verify" --jq '[.check_runs[] | select(.conclusion=="success")] | length')
+          if [ "$ok" = 0 ]; then
+            gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --remove-label cases:approved
+            gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "このコミット（${SHA:0:7}）では、まだ「実装前にテストが失敗すること」の確認（specflow / verify）が成功していません。CI の完了後にもう一度ラベルを付けてください。"
+            exit 1
+          fi
+      - name: 承認タグを付ける
+        if: github.event.action == 'labeled'
+        run: |
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null || true
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA" >/dev/null
+          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "ケース表の承認を記録しました（承認者: @$ACTOR、コミット: ${SHA:0:7}）。\`/implement\` とコメントすると実装を始めます。これ以降 specs/ と tests/ を変更すると CI が止まります。"
+      - name: 承認タグを消す
+        if: github.event.action == 'unlabeled'
+        run: |
+          if gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null; then
+            gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "ケース表の承認を取り消しました。"
+          fi

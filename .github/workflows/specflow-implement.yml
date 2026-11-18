@@ -1,0 +1,103 @@
+# 承認済みのケース表PRに「/implement」とコメント → AI が実装を書き、同じPRに push する。
+# AI は specs/ tests/ .claude/ .github/ CLAUDE.md を変更できない（hook）。push 前にも差分を検査する。
+name: specflow-implement
+on:
+  issue_comment:
+    types: [created]
+permissions: {}
+concurrency:
+  group: specflow-pr-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  implement:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/implement') &&
+      contains(github.event.issue.labels.*.name, 'cases:approved') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      PR: ${{ github.event.issue.number }}
+      TAG: specflow/approved/pr-${{ github.event.issue.number }}
+      LOCKED: specs tests .claude .github CLAUDE.md specflow specflow.config.json
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SPECFLOW_APP_ID }}
+          private-key: ${{ secrets.SPECFLOW_APP_PRIVATE_KEY }}
+      - name: PR の確認（同じリポジトリのブランチだけ）
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          info=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json isCrossRepository,headRefName,baseRefName)
+          [ "$(jq -r .isCrossRepository <<<"$info")" = false ] || { echo "::error::フォークからのPRは対象外です"; exit 1; }
+          echo "head=$(jq -r .headRefName <<<"$info")" >> "$GITHUB_OUTPUT"
+          echo "base=$(jq -r .baseRefName <<<"$info")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+      - name: 承認タグとロックの確認
+        env:
+          BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          git fetch --force --tags origin
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::承認タグ $TAG がありません"; exit 1; }
+          # shellcheck disable=SC2086
+          git diff --quiet "$TAG" HEAD -- $LOCKED || { echo "::error::承認後に合意済みファイルが変わっています。再承認してください"; exit 1; }
+          spec_dir=$(git diff --name-only "origin/$BASE...HEAD" -- specs | cut -d/ -f1-2 | sort -u | head -1)
+          echo "SPEC_DIR=$spec_dir" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/specflow-setup
+      - name: プロンプトの用意
+        run: |
+          mkdir -p .specflow-out
+          {
+            echo 'PROMPT<<__EOF__'
+            sed -e "s|{{SPEC_DIR}}|$SPEC_DIR|g" \
+                -e "s|{{TEST_COMMAND}}|$(jq -r .testCommand specflow.config.json)|g" specflow/prompts/implement.md
+            echo '__EOF__'
+          } >> "$GITHUB_ENV"
+
+      - id: claude
+        uses: anthropics/claude-code-action@v1 # 導入時にコミットSHAで固定する
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: ${{ env.PROMPT }}
+          claude_args: >-
+            --max-turns 60
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,Bash(npm test:*),Bash(npm run test:*),Bash(npx vitest:*),Bash(vendor/bin/phpunit:*),Bash(vendor/bin/pest:*)"
+            ${{ vars.SPECFLOW_MODEL && format('--model {0}', vars.SPECFLOW_MODEL) || '' }}
+
+      - name: 結果の反映
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          EXEC: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          usage=$(node specflow/bin/usage.mjs "$EXEC" || true)
+          status=$(jq -r '.status // "missing"' .specflow-out/result.json 2>/dev/null || echo missing)
+          if [ "$status" = objection ]; then
+            body=$(jq -r '"AIから、ケース表への指摘があります（実装は push していません）。仕様の変更として判断してください。\n\n" + ([.items[] | "- **" + .case + "** " + .reason] | join("\n"))' .specflow-out/result.json)
+            gh pr comment "$PR" --body "$body"$'\n\n'"$usage"
+            exit 0
+          fi
+          # hook をすり抜けた変更がないか（最後の砦は CI のロック検査）
+          # shellcheck disable=SC2086
+          if git status --porcelain -- $LOCKED | grep -q .; then
+            echo "::error::合意済みのファイルが変更されています。push しません。"
+            git status --porcelain -- $LOCKED
+            exit 1
+          fi
+          git config user.name "specflow[bot]"
+          git config user.email "specflow-bot@users.noreply.github.com"
+          git add -A
+          git commit -m "実装 (#$PR)" || { gh pr comment "$PR" --body "変更はありませんでした。"$'\n\n'"$usage"; exit 0; }
+          git push origin HEAD
+          summary=$(jq -r '.summary // ""' .specflow-out/result.json)
+          gh pr comment "$PR" --body "実装を push しました。CI（specflow / verify）の結果を確認し、コードレビューは \`@claude review\`（cosmos）で依頼してください。"$'\n\n'"$summary"$'\n\n'"$usage"
