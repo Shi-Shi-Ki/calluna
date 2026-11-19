@@ -58,6 +58,18 @@ function validate(doc, rel) {
   check('case', doc?.cases);
   check('assumption', doc?.assumptions);
   check('manual', doc?.manual_checks);
+  const caseIds = new Set((doc?.cases ?? []).map((c) => c.id));
+  const hasBoundaryCase = (doc?.cases ?? []).some((c) => c.viewpoint === '境界値');
+  if (hasBoundaryCase && !(doc?.boundaries ?? []).length) errors.push(`${rel}: 観点「境界値」のケースがあるのに boundaries がありません`);
+  (doc?.boundaries ?? []).forEach((b, i) => {
+    const where = `${rel}: boundaries[${i}]`;
+    if (!b.name) errors.push(`${where}: name がありません`);
+    if (!Array.isArray(b.points) || b.points.length < 2) errors.push(`${where}: points は2点以上（日付・数量は「すぐ内側・ちょうど・すぐ外側」の3点）にしてください`);
+    for (const pt of b.points ?? []) {
+      if (!pt.value) errors.push(`${where}: points に value がありません`);
+      if (!caseIds.has(pt.case)) errors.push(`${where}: 「${pt.value}」のケース "${pt.case}" が cases にありません`);
+    }
+  });
   (doc?.cases ?? []).forEach((c) => {
     for (const k of REQUIRED) if (c[k] === undefined || c[k] === '') errors.push(`${rel}: ${c.id}: ${k} がありません`);
     if (c.viewpoint && !VIEWPOINTS.includes(c.viewpoint)) errors.push(`${rel}: ${c.id}: viewpoint "${c.viewpoint}" は ${VIEWPOINTS.join(' / ')} のいずれか`);
@@ -79,6 +91,13 @@ function render(doc, dir) {
   if (doc.assumptions?.length) {
     L.push('## 仮定（AIが選んだ解釈。承認すると仕様の一部になります）', '');
     for (const a of doc.assumptions) L.push(`- **${a.id}** ${a.text}`);
+    L.push('');
+  }
+  if (doc.boundaries?.length) {
+    L.push('## 境界の一覧（見落としがないかを確認してください）', '');
+    L.push('| 境界 | 確認する値 → ケース |');
+    L.push('| --- | --- |');
+    for (const b of doc.boundaries) L.push(`| ${cell(b.name)} | ${b.points.map((p) => `${cell(p.value)} → ${cell(p.case)}`).join('<br>')} |`);
     L.push('');
   }
   L.push('## 機械で判定するケース', '');
