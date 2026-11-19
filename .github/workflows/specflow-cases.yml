@@ -1,4 +1,5 @@
 # Issue に「/cases」とコメント → AI がブロッカーを質問するか、ケース表PRを作る。
+# ケース表PR（ラベル cases:review）に「/cases」とコメントしても同じ（元の Issue として扱い、PRのコメントも指摘として読む）。
 # 必要なもの:
 #   secrets.CLAUDE_CODE_OAUTH_TOKEN  Team シートで `claude setup-token` して作ったトークン
 #   vars.SPECFLOW_APP_ID / secrets.SPECFLOW_APP_PRIVATE_KEY
@@ -15,19 +16,30 @@ concurrency:
 jobs:
   cases:
     if: >-
-      !github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/cases') &&
-      contains(github.event.issue.labels.*.name, 'spec') &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      ((!github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'spec')) ||
+       (github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'cases:review')))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
+      pull-requests: read
     env:
       N: ${{ github.event.issue.number }}
       BRANCH: specflow/issue-${{ github.event.issue.number }}
+      FROM_PR: ${{ github.event.issue.pull_request && github.event.issue.number || '' }}
       SPECFLOW_PHASE: author # hook: specs/ tests/ の作成を許可（.claude/ .github/ は常に不可）
     steps:
+      - name: ケース表PRから呼ばれた場合は、元の Issue 番号に読み替える
+        if: env.FROM_PR != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$FROM_PR" --jq .head.ref)
+          [[ "$head" =~ ^specflow/issue-([0-9]+)$ ]] || { echo "::error::ケース表PR（specflow/issue-*）ではありません: $head"; exit 1; }
+          echo "N=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+          echo "BRANCH=$head" >> "$GITHUB_ENV"
       - id: app
         uses: actions/create-github-app-token@v2
         with:
@@ -56,6 +68,11 @@ jobs:
           gh issue view "$N" --json title,body,comments \
             --jq '"# " + .title + "\n\n" + .body + "\n\n## コメント\n" + ([.comments[] | "\n### " + .author.login + "\n" + .body] | join("\n"))' \
             > .specflow-out/issue.md
+          if [ -n "$FROM_PR" ]; then
+            gh pr view "$FROM_PR" --json comments \
+              --jq '"\n\n## ケース表PRへの指摘（PR #'"$FROM_PR"' のコメント）\n" + ([.comments[] | select(.author.login | endswith("[bot]") | not) | "\n### " + .author.login + "\n" + .body] | join("\n"))' \
+              >> .specflow-out/issue.md
+          fi
           {
             echo 'PROMPT<<__EOF__'
             sed -e "s|{{ISSUE_FILE}}|.specflow-out/issue.md|g" \
@@ -87,6 +104,7 @@ jobs:
             body=$(jq -r '"仕様に、決めてもらう必要がある点があります。Issue本文を直すか、このIssueにコメントで回答してから、もう一度 `/cases` とコメントしてください。\n\n" + ([.blockers[] | "- **" + .id + "** " + .question + "\n  - 理由: " + .why + (if .options then "\n  - 候補: " + (.options | join(" / ")) else "" end)] | join("\n"))' .specflow-out/result.json)
             gh issue comment "$N" --body "$body"$'\n\n'"$usage"
             gh issue edit "$N" --add-label "spec:blocked"
+            if [ -n "$FROM_PR" ]; then gh pr comment "$FROM_PR" --body "仕様への質問を Issue #$N に書きました。回答後に \`/cases\` をもう一度コメントしてください。"; fi
             exit 0
           fi
           if [ "$status" != ready ]; then
@@ -111,7 +129,7 @@ jobs:
             echo "Refs #$N"
             echo
             echo "## レビューしてほしいもの"
-            echo "テストコードではなく、下のケース表（\`$spec_dir/cases.md\`）です。問題なければラベル **cases:approved** を付けてください。直したい場合は Issue の仕様を直して \`/cases\` をもう一度、またはこの PR にコメントしてください。"
+            echo "テストコードではなく、下のケース表（\`$spec_dir/cases.md\`）です。問題なければラベル **cases:approved** を付けてください。直したい場合は、Issue の仕様を直すか、この PR に指摘をコメントしてから、Issue かこの PR に \`/cases\` とコメントしてください（作り直します）。"
             echo
             sed '1,/^- 仕様:/d' "$spec_dir/cases.md"
             echo
