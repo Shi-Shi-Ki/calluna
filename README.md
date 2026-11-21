@@ -12,6 +12,7 @@ GitHub Issue の日本語の仕様から、AI がケース表とテストを作�
 | 3 | PR の `cases.md` を読む。良ければラベル `cases:approved` | CI が「全ケースが一度失敗する」ことを確認済みなら、承認タグ `specflow/approved/pr-<番号>` を記録 |
 | 4 | `/implement` とコメント | AI が実装を push。`specs/` `tests/` は hook で変更不可。CI が全ケース成功と、承認後に合意済みファイルが変わっていないことを検査 |
 | 5 | 差分を見て、`cases.md` の「人が確認する項目」を検証用環境で確認し、マージ | — |
+| いつでも | Issue か PR に `/ask <質問>` とコメント | AI が仕様・ケース表・テスト・コードを読み、コメントで答える。読み取り専用で、ファイルもラベルも変えない。質問と回答は `/cases` の入力に含めない |
 
 ## ファイル
 
@@ -21,14 +22,16 @@ GitHub Issue の日本語の仕様から、AI がケース表とテストを作�
 | `.github/workflows/specflow-cases.yml` | `/cases`：ブロッカー質問 or ケース表PR |
 | `.github/workflows/specflow-approve.yml` | `cases:approved`：権限とRed確認をチェックして承認タグを記録 |
 | `.github/workflows/specflow-implement.yml` | `/implement`：実装して同じPRに push |
+| `.github/workflows/specflow-ask.yml` | `/ask`：質問に答える（読み取り専用。コードレビューは cosmos の `@claude review`） |
 | `.github/workflows/specflow-ci.yml` | 必須チェック `verify`：表とテストの1対1、Red/Green、ロック検査 |
 | `.github/actions/specflow-setup` | `specflow.config.json` に従い Node / PHP を準備 |
 | `specflow.config.json` | 言語ごとの差（テストコマンド、JUnit XML の場所）をここだけに置く |
 | `specflow/bin/render-cases.mjs` | `cases.yaml` の検証と `cases.md` の生成（`--check` でCI用） |
 | `specflow/bin/check-report.mjs` | JUnit XML とケース表の突き合わせ（言語非依存） |
+| `specflow/bin/answer.mjs` | `/ask` の回答本文を実行ログから取り出す |
 | `specflow/bin/usage.mjs` | AIのターン数・所要時間・API換算額をコメントに添える |
 | `specflow/bin/leadtime.sh` | Issue作成〜マージのリードタイムを GitHub の記録から出す |
-| `specflow/prompts/*.md` | `/cases` と `/implement` のプロンプト |
+| `specflow/prompts/*.md` | `/cases`・`/implement`・`/ask` のプロンプト |
 | `.claude/rules/specflow.md` / `.claude/settings.json` / `.claude/hooks/guard-cases.sh` | ルールと hook（VS Code でも CI でも同じものが効く）。`CLAUDE.md` は cosmos の `team-init` に任せる |
 | `.github/CODEOWNERS` | `specs/` `tests/` `.claude/` `.github/` の変更に人の承認を必須に |
 | `specs/1-overdue-reminder/` `src/overdue.js` `tests/` | GAS の見本（期限切れ申請の督促リスト、9ケース） |

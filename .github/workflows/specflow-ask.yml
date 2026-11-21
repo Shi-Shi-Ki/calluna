@@ -1,0 +1,104 @@
+# Issue か PR に「/ask <質問>」とコメント → AI が仕様・ケース表・テスト・コードを読んで、コメントで答える。
+# 読み取り専用: ファイルの変更・push・ラベル操作はしない（AI に渡すツールは Read / Glob / Grep だけ）。
+# 回答コメントには目印 <!-- specflow:ask --> を付け、/cases の入力からは質問と回答の両方を除外する。
+# コードレビューは cosmos の `@claude review` の担当。/ask はレビューをしない。
+name: specflow-ask
+on:
+  issue_comment:
+    types: [created]
+permissions: {}
+concurrency:
+  group: specflow-ask-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  ask:
+    if: >-
+      startsWith(github.event.comment.body, '/ask') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      N: ${{ github.event.issue.number }}
+      IS_PR: ${{ github.event.issue.pull_request && 'true' || 'false' }}
+      COMMENT_URL: ${{ github.event.comment.html_url }}
+    steps:
+      - name: 読む対象のブランチを決める（PR なら PR のブランチ。フォークは既定ブランチ）
+        id: ref
+        run: |
+          ref="${{ github.event.repository.default_branch }}"
+          if [ "$IS_PR" = true ]; then
+            info=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$N")
+            if [ "$(jq -r .head.repo.full_name <<<"$info")" = "$GITHUB_REPOSITORY" ]; then
+              ref=$(jq -r .head.ref <<<"$info")
+            fi
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+          persist-credentials: false # AI が .git/config からトークンを読めないように
+
+      - name: 質問と文脈を取り出す
+        env:
+          QUESTION: ${{ github.event.comment.body }}
+        run: |
+          mkdir -p .specflow-out
+          # 質問本文（先頭の /ask を外す）
+          printf '%s\n' "${QUESTION#/ask}" > .specflow-out/question.md
+          # Issue / PR の本文とコメント（過去の /ask の質問と回答も含める。会話の続きに答えられるように）
+          # PR も Issue の API で本文とコメントが取れる
+          thread() {
+            gh api "repos/$GITHUB_REPOSITORY/issues/$1" --jq '"# #" + (.number|tostring) + " " + .title + "\n\n" + (.body // "")'
+            echo; echo "## コメント"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$1/comments" --jq '.[] | "\n### " + .user.login + "\n" + .body'
+          }
+          thread "$N" > .specflow-out/context.md
+          if [ "$IS_PR" = true ]; then
+            head=$(git rev-parse --abbrev-ref HEAD)
+            # ケース表PRなら、元の仕様 Issue も読む
+            if [[ "$head" =~ ^specflow/issue-([0-9]+)$ ]]; then
+              { echo; echo "---"; echo "（以下は元の仕様 Issue）"; thread "${BASH_REMATCH[1]}"; } >> .specflow-out/context.md
+            fi
+            gh pr view "$N" -R "$GITHUB_REPOSITORY" --json files --jq '.files[] | .path + " (+" + (.additions|tostring) + " -" + (.deletions|tostring) + ")"' > .specflow-out/pr-files.txt || true
+            gh pr diff "$N" -R "$GITHUB_REPOSITORY" > .specflow-out/pr.diff || true
+          fi
+          {
+            echo 'PROMPT<<__EOF__'
+            sed -e "s|{{NUMBER}}|$N|g" -e "s|{{IS_PR}}|$IS_PR|g" specflow/prompts/ask.md
+            echo '__EOF__'
+          } >> "$GITHUB_ENV"
+
+      - id: claude
+        uses: anthropics/claude-code-action@v1 # 導入時にコミットSHAで固定する
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: ${{ env.PROMPT }}
+          claude_args: >-
+            --max-turns 20
+            --allowedTools "Read,Glob,Grep"
+            --disallowedTools "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch"
+            ${{ vars.SPECFLOW_MODEL && format('--model {0}', vars.SPECFLOW_MODEL) || '' }}
+
+      - name: 回答をコメントする
+        if: always() && steps.claude.outcome != 'skipped'
+        env:
+          EXEC: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          usage=$(node specflow/bin/usage.mjs "$EXEC" || true)
+          answer=$(node specflow/bin/answer.mjs "$EXEC" || true)
+          [ -n "$answer" ] || answer="回答を作れませんでした。Actions のログを確認してください。"
+          {
+            echo '<!-- specflow:ask -->'
+            echo "[質問]($COMMENT_URL) への回答です（読み取り専用。ファイルは変更していません）。"
+            echo
+            echo "$answer"
+            echo
+            echo "$usage"
+          } > .specflow-out/answer.md
+          gh issue comment "$N" -R "$GITHUB_REPOSITORY" --body-file .specflow-out/answer.md
