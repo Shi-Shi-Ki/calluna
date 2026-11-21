@@ -14,6 +14,19 @@ assumptions:
   - id: A1-3
     text: すべての列が空の行は無視する（シート末尾の空行を想定）。
 
+# 仕様の中の「比較」と「区切り」。各点に対応するケースを置く。
+boundaries:
+  - name: 期限と基準日（ルール1）
+    points:
+      - { value: 期限が基準日の前日（督促する）, case: TC1-02 }
+      - { value: 期限が基準日と同じ日（督促しない）, case: TC1-02 }
+      - { value: 期限が基準日より後（督促しない）, case: TC1-01 }
+  - name: 督促対象の件数
+    points:
+      - { value: 0件, case: TC1-09 }
+      - { value: 1件, case: TC1-01 }
+      - { value: 複数件（並び順）, case: TC1-03 }
+
 # 機械では判定できず、人が確認する項目。
 manual_checks:
   - id: M1-01
