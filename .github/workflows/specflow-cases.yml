@@ -65,12 +65,13 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           mkdir -p .specflow-out
+          # /ask の質問と回答は入力にしない（質問が変更要望として読まれないように）
           gh issue view "$N" --json title,body,comments \
-            --jq '"# " + .title + "\n\n" + .body + "\n\n## コメント\n" + ([.comments[] | "\n### " + .author.login + "\n" + .body] | join("\n"))' \
+            --jq '"# " + .title + "\n\n" + .body + "\n\n## コメント\n" + ([.comments[] | select(.body | (startswith("/ask") or contains("<!-- specflow:ask -->")) | not) | "\n### " + .author.login + "\n" + .body] | join("\n"))' \
             > .specflow-out/issue.md
           if [ -n "$FROM_PR" ]; then
             gh pr view "$FROM_PR" --json comments \
-              --jq '"\n\n## ケース表PRへの指摘（PR #'"$FROM_PR"' のコメント）\n" + ([.comments[] | select(.author.login | endswith("[bot]") | not) | "\n### " + .author.login + "\n" + .body] | join("\n"))' \
+              --jq '"\n\n## ケース表PRへの指摘（PR #'"$FROM_PR"' のコメント）\n" + ([.comments[] | select(.author.login | endswith("[bot]") | not) | select(.body | startswith("/ask") | not) | "\n### " + .author.login + "\n" + .body] | join("\n"))' \
               >> .specflow-out/issue.md
           fi
           {

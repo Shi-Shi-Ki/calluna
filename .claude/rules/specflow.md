@@ -11,6 +11,7 @@
 3. 承認: 人が PR の `cases.md` を読み、ラベル `cases:approved` を付ける。この時点のコミットが「合意」。
 4. 実装（`/implement`）: テストを通す実装を書く。**`specs/` と `tests/` は変更しない。**
 5. CI・レビュー・人の受け入れ確認（`cases.md` の「人が確認する項目」）。コードレビューは cosmos の `@claude review` で行い、specflow は行わない。
+- 質問（`/ask`）: どのフェーズでも Issue か PR で質問できる。AI は読み取り専用で答え、ファイルを変更しない。直す必要があれば、直し方（`/cases`・`/implement`・Issue の修正）を案内する。`/ask` の質問と回答は `/cases` の入力に含めない。
 
 ## ケース表のルール（フェーズ2）
 - ID は `TC<Issue番号>-<2桁>`。決定事項は `D<Issue番号>-<n>`、仮定は `A<Issue番号>-<n>`、人の確認項目は `M<Issue番号>-<2桁>`。
