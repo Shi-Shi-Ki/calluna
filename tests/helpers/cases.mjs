@@ -12,8 +12,11 @@ function revive(v) {
   if (v && typeof v === 'object') {
     const keys = Object.keys(v);
     if (keys.length === 1 && keys[0] === 'date') {
-      const [y, m, d] = v.date.split('-').map(Number);
-      return new Date(y, m - 1, d); // スクリプトのタイムゾーン（TZ）のローカル日付
+      // "YYYY-MM-DD" または "YYYY-MM-DD HH:mm"（セルに時刻が入っている場合）
+      const [ds, ts = '0:0'] = v.date.split(' ');
+      const [y, m, d] = ds.split('-').map(Number);
+      const [hh, mm] = ts.split(':').map(Number);
+      return new Date(y, m - 1, d, hh, mm); // スクリプトのタイムゾーン（TZ）のローカル日時
     }
     return Object.fromEntries(keys.map((k) => [k, revive(v[k])]));
   }
