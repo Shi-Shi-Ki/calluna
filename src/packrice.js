@@ -34,6 +34,15 @@ function reservationSheetTitle(today) {
   throw new Error('未実装: reservationSheetTitle');
 }
 
+/**
+ * 固定URLの転送先（当日のフォームの公開URL）を決める。
+ * @param {*} formUrl 保存されている当日のフォームURL
+ * @return {{ok: true, redirect: string} | {ok: false, code: string, message: string}}
+ */
+function resolveEntryRedirect(formUrl) {
+  throw new Error('未実装: resolveEntryRedirect');
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { buildReservationPlan: buildReservationPlan, buildFloorChoices: buildFloorChoices, reservationSheetTitle: reservationSheetTitle };
+  module.exports = { buildReservationPlan: buildReservationPlan, buildFloorChoices: buildFloorChoices, reservationSheetTitle: reservationSheetTitle, resolveEntryRedirect: resolveEntryRedirect };
 }

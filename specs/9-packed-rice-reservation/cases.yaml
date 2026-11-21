@@ -23,6 +23,9 @@ decisions:
   - id: D9-6
     text: 管理シートに不正な行（拠点名が未入力／配布個数が未入力または1未満／通知先が未入力または存在しない）があるとき、その拠点だけ処理しない（シートも出さず、上限通知も送らず）。xl-system-alert に通知し、正常な拠点は通常どおり処理する。
     source: 回答B6
+  - id: D9-7
+    text: 回答シート（フォーム）が毎日新しくなっても、予約者が使うURLは常に1つにする。そのURLにアクセスすると、当日のフォームへ転送する。
+    source: 追加の仕様（Issueコメント）
 assumptions:
   - id: A9-1
     text: 重複の判定は、拠点をまたいでメールアドレス単位で行う。回答シートの行の順を受付順とし、最初に出てきた行を採用する。
@@ -40,6 +43,8 @@ assumptions:
     text: フォームの選択肢は、拠点名が空でない行を管理シートの順に並べ、重複は1つにする。配布個数や通知先が不正な拠点も選択肢には含める（通知は管理シート側の不正の通知で行う）。
   - id: A9-8
     text: 管理シートの不正な拠点宛の回答は、追加の通知なしで除外する（管理シートの不正で既に通知しているため）。通知の宛先は固定の xl-system-alert で、純粋関数は通知の種類と行番号だけを返す。
+  - id: A9-9
+    text: 固定URLは Apps Script のウェブアプリとして用意し、新しいフォームを作るたびに当日のフォームの公開URLを保存して、アクセス時にそこへ転送する。転送先が未設定・空白だけ・Googleフォーム（https://docs.google.com/forms/ で始まる）以外のときは転送せず、「受付準備中」を表示して xl-system-alert に通知する（任意のURLへの転送を防ぐ）。純粋関数は転送先か、エラーの種類だけを返す。
 boundaries:
   - name: 配布個数の下限（1未満は不正）
     points:
@@ -111,6 +116,18 @@ boundaries:
         case: TC9-01
       - value: 同じ拠点名が2行
         case: TC9-28
+  - name: フォームURLの入力（固定URLの転送先）
+    points:
+      - value: 正常なURL
+        case: TC9-36
+      - value: 前後に空白があるURL
+        case: TC9-37
+      - value: 空文字
+        case: TC9-38
+      - value: 空白だけ
+        case: TC9-39
+      - value: Googleフォーム以外のURL
+        case: TC9-40
 manual_checks:
   - id: M9-01
     item: フォームの有効化・無効化のトリガーが 7:00 と 10:30 に動く
@@ -121,6 +138,9 @@ manual_checks:
   - id: M9-03
     item: 毎日、フォームと「パックライス予約一覧（YYYY-MM-DD）」が新規に作られ、旧ファイルが残る。閲覧シートは利用者が編集できず、編集は総務部とシステム管理者だけ
     when: リリース初日
+  - id: M9-05
+    item: 固定URLにアクセスすると当日のフォームが開く。翌日にフォームが作り直されても、同じURLで新しい当日のフォームが開く。転送先が未設定のときは「受付準備中」が表示される
+    when: リリース初日と翌日
   - id: M9-04
     item: フォームの拠点のプルダウンが管理シートの拠点名と一致し、氏名がメールアドレスから自動設定される
     when: 検証用フォームで1回
@@ -1223,3 +1243,63 @@ cases:
       today: 2026-11-21
     expected:
       title: パックライス予約一覧（2026-11-21）
+  - id: TC9-36
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 正常
+    title: 保存されている当日のフォームURLへ転送する
+    given: 保存されているフォームURLが https://docs.google.com/forms/d/e/AAA/viewform
+    when: 固定URLにアクセス
+    then: https://docs.google.com/forms/d/e/AAA/viewform へ転送する
+    input:
+      fn: entry
+      formUrl: https://docs.google.com/forms/d/e/AAA/viewform
+    expected:
+      redirect: https://docs.google.com/forms/d/e/AAA/viewform
+  - id: TC9-37
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 境界値
+    title: 保存されたURLの前後の空白は取り除いて転送する
+    given: 保存されているフォームURLの前後に空白がある
+    when: 固定URLにアクセス
+    then: 空白を除いた https://docs.google.com/forms/d/e/AAA/viewform へ転送する
+    input:
+      fn: entry
+      formUrl: " https://docs.google.com/forms/d/e/AAA/viewform "
+    expected:
+      redirect: https://docs.google.com/forms/d/e/AAA/viewform
+  - id: TC9-38
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 空の値
+    title: 転送先が未設定なら転送せずエラーにする
+    given: 保存されているフォームURLが空文字
+    when: 固定URLにアクセス
+    then: FORM_URL_MISSING のエラー。転送しない
+    input:
+      fn: entry
+      formUrl: ""
+    expected:
+      error: FORM_URL_MISSING
+  - id: TC9-39
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 境界値
+    title: 空白だけの転送先は未設定として扱う
+    given: 保存されているフォームURLが半角空白だけ
+    when: 固定URLにアクセス
+    then: FORM_URL_MISSING のエラー。転送しない
+    input:
+      fn: entry
+      formUrl: "   "
+    expected:
+      error: FORM_URL_MISSING
+  - id: TC9-40
+    spec_ref: 仮定A9-9
+    viewpoint: 異常値
+    title: Googleフォーム以外のURLには転送しない
+    given: 保存されているURLが https://example.com/forms/d/e/AAA/viewform
+    when: 固定URLにアクセス
+    then: FORM_URL_INVALID のエラー。転送しない
+    input:
+      fn: entry
+      formUrl: https://example.com/forms/d/e/AAA/viewform
+    expected:
+      error: FORM_URL_INVALID

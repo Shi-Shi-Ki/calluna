@@ -5,7 +5,7 @@ import { describe, test, expect } from 'vitest';
 import { loadCases } from './helpers/cases.mjs';
 
 const require = createRequire(import.meta.url);
-const { buildReservationPlan, buildFloorChoices, reservationSheetTitle } = require('../src/packrice.js');
+const { buildReservationPlan, buildFloorChoices, reservationSheetTitle, resolveEntryRedirect } = require('../src/packrice.js');
 
 const cases = loadCases('9-packed-rice-reservation');
 
@@ -13,6 +13,15 @@ describe('#9 パックライスの予約一覧', () => {
   test.each(cases)('$name', ({ input, expected }) => {
     if (input.fn === 'title') {
       expect(reservationSheetTitle(input.today)).toBe(expected.title);
+      return;
+    }
+    if (input.fn === 'entry') {
+      const entry = resolveEntryRedirect(input.formUrl);
+      if (expected.error) {
+        expect(entry).toMatchObject({ ok: false, code: expected.error });
+      } else {
+        expect(entry).toMatchObject({ ok: true, redirect: expected.redirect });
+      }
       return;
     }
     const result = input.fn === 'choices'
