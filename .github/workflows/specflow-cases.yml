@@ -89,7 +89,7 @@ jobs:
           prompt: ${{ env.PROMPT }}
           claude_args: >-
             --max-turns 40
-            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,Bash(npm test:*),Bash(npm run test:*),Bash(npx vitest:*),Bash(vendor/bin/phpunit:*),Bash(vendor/bin/pest:*)"
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,Bash(npm test:*),Bash(npm run test:*),Bash(npx vitest:*),Bash(node specflow/bin/render-cases.mjs:*),Bash(vendor/bin/phpunit:*),Bash(vendor/bin/pest:*)"
             ${{ vars.SPECFLOW_MODEL && format('--model {0}', vars.SPECFLOW_MODEL) || '' }}
 
       - name: 結果の反映（質問を返す / ケース表PRを作る）
@@ -117,7 +117,11 @@ jobs:
             echo "::error::.github/ .claude/ CLAUDE.md specflow/ が変更されています。中止します。"; exit 1
           fi
           spec_dir=$(jq -r .spec_dir .specflow-out/result.json)
-          node specflow/bin/render-cases.mjs
+          if ! node specflow/bin/render-cases.mjs 2> .specflow-out/render.err; then
+            cat .specflow-out/render.err
+            gh issue comment "$N" --body "ケース表の検査で止まりました（push していません）。もう一度 \`/cases\` を試すか、内容を確認してください。"$'\n\n```\n'"$(sed 's/^::error:://' .specflow-out/render.err)"$'\n```\n\n'"$usage"
+            exit 1
+          fi
           git config user.name "specflow[bot]"
           git config user.email "specflow-bot@users.noreply.github.com"
           git add -A

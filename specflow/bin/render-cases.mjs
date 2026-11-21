@@ -9,7 +9,7 @@ import YAML from 'yaml';
 const CHECK = process.argv.includes('--check');
 const ROOT = process.cwd();
 const SPECS = path.join(ROOT, 'specs');
-const ID = { case: /^TC\d+-\d{2,3}$/, assumption: /^A\d+-\d+$/, manual: /^M\d+-\d{2,3}$/ };
+const ID = { case: /^TC\d+-\d{2,3}$/, decision: /^D\d+-\d+$/, assumption: /^A\d+-\d+$/, manual: /^M\d+-\d{2,3}$/ };
 const VIEWPOINTS = ['正常', '空の値', '重複', '境界値', '異常値', 'シートの破損', '権限', '同時実行', 'その他'];
 const REQUIRED = ['id', 'spec_ref', 'viewpoint', 'title', 'given', 'when', 'then', 'expected'];
 
@@ -23,7 +23,21 @@ for (const dir of fs.existsSync(SPECS) ? fs.readdirSync(SPECS).sort() : []) {
   const rel = path.relative(ROOT, yamlPath);
   let doc;
   try {
-    doc = YAML.parse(fs.readFileSync(yamlPath, 'utf8'));
+    const src = fs.readFileSync(yamlPath, 'utf8');
+    const lc = new YAML.LineCounter();
+    const parsed = YAML.parseDocument(src, { lineCounter: lc });
+    if (parsed.errors.length) throw parsed.errors[0];
+    // 値の途中の「 #」は YAML ではコメントの始まりになり、それ以降が黙って消える。
+    // 行末コメントは使わない決まりにして、消えた可能性がある箇所をすべて止める。
+    YAML.visit(parsed, {
+      Node(_, node) {
+        if (node.comment && node.range) {
+          const { line } = lc.linePos(node.range[1]);
+          errors.push(`${rel}:${line}: 値のあとに「 #…」があり、そこから先が値から消えています。値を "…" で囲んでください（行末コメントは使えません）`);
+        }
+      },
+    });
+    doc = parsed.toJS();
   } catch (e) {
     errors.push(`${rel}: YAMLとして読めません: ${e.message}`);
     continue;
@@ -56,8 +70,24 @@ function validate(doc, rel) {
     seenIds.set(item.id, rel);
   });
   check('case', doc?.cases);
+  check('decision', doc?.decisions);
   check('assumption', doc?.assumptions);
   check('manual', doc?.manual_checks);
+  // 回答済みの点は「決定事項」。AIが選んだ「仮定」と混ぜない。
+  (doc?.assumptions ?? []).forEach((a) => {
+    if (/回答\s*B\d+/.test(a.text ?? '')) errors.push(`${rel}: ${a.id}: Issue で回答済みの点は assumptions ではなく decisions に書いてください`);
+  });
+  // 承認前に人が確かめることはブロッカー（質問）にする。manual_checks に回さない。
+  (doc?.manual_checks ?? []).forEach((m) => {
+    if (/承認前/.test(m.when ?? '')) errors.push(`${rel}: ${m.id}: 「承認前」に確認することは manual_checks ではなく、/cases のブロッカー（質問）にしてください`);
+  });
+  // spec_ref から参照している決定・仮定・確認項目が実在するか
+  const known = new Set([...(doc?.decisions ?? []), ...(doc?.assumptions ?? []), ...(doc?.manual_checks ?? [])].map((x) => x.id));
+  (doc?.cases ?? []).forEach((c) => {
+    for (const ref of String(c.spec_ref ?? '').match(/\b[ADM]\d+-\d+\b/g) ?? []) {
+      if (!known.has(ref)) errors.push(`${rel}: ${c.id}: spec_ref の「${ref}」が decisions / assumptions / manual_checks にありません`);
+    }
+  });
   const caseIds = new Set((doc?.cases ?? []).map((c) => c.id));
   const hasBoundaryCase = (doc?.cases ?? []).some((c) => c.viewpoint === '境界値');
   if (hasBoundaryCase && !(doc?.boundaries ?? []).length) errors.push(`${rel}: 観点「境界値」のケースがあるのに boundaries がありません`);
@@ -80,6 +110,22 @@ function cell(v) {
   return String(v ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 }
 
+// 機械が判定する期待値を、人が「期待結果」の文と見比べられる形にする。
+function fmt(v) {
+  if (v === null || v === undefined) return '（なし）';
+  if (v === '') return '""';
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '（0件）';
+    if (v.every(Array.isArray)) return v.map((r) => r.map(fmt).join(', ')).join('<br>');
+    return v.map(fmt).join(', ');
+  }
+  if (typeof v === 'object') {
+    if ('date' in v && Object.keys(v).length === 1) return String(v.date);
+    return Object.entries(v).map(([k, x]) => `${k}:${Array.isArray(x) && x.length && x.every(Array.isArray) ? '<br>' : ' '}${fmt(x)}`).join('<br>');
+  }
+  return String(v);
+}
+
 function render(doc, dir) {
   const L = [];
   L.push(`<!-- 自動生成: specs/${dir}/cases.yaml から。直接編集しないでください -->`);
@@ -88,6 +134,11 @@ function render(doc, dir) {
   if (doc.risk) L.push(`- リスク: ${doc.risk}`);
   if (doc.target) L.push(`- 対象: \`${doc.target}\``);
   L.push('');
+  if (doc.decisions?.length) {
+    L.push('## 決定事項（Issue で回答済み。仕様として扱います）', '');
+    for (const d of doc.decisions) L.push(`- **${d.id}** ${d.text}${d.source ? `（${d.source}）` : ''}`);
+    L.push('');
+  }
   if (doc.assumptions?.length) {
     L.push('## 仮定（AIが選んだ解釈。承認すると仕様の一部になります）', '');
     for (const a of doc.assumptions) L.push(`- **${a.id}** ${a.text}`);
@@ -101,10 +152,11 @@ function render(doc, dir) {
     L.push('');
   }
   L.push('## 機械で判定するケース', '');
-  L.push('| ID | 仕様の該当箇所 | 観点 | 前提 | 操作 | 期待結果 |');
-  L.push('| --- | --- | --- | --- | --- | --- |');
+  L.push('「期待結果」は人が読む文、「判定する値」はテストが実際に比べる値です。**両者が同じことを言っているか**を確認してください。', '');
+  L.push('| ID | 仕様の該当箇所 | 観点 | 前提 | 操作 | 期待結果 | 判定する値 |');
+  L.push('| --- | --- | --- | --- | --- | --- | --- |');
   for (const c of doc.cases ?? []) {
-    L.push(`| ${cell(c.id)} | ${cell(c.spec_ref)} | ${cell(c.viewpoint)} | ${cell(c.given)} | ${cell(c.when)} | ${cell(c.then)} |`);
+    L.push(`| ${cell(c.id)} | ${cell(c.spec_ref)} | ${cell(c.viewpoint)} | ${cell(c.given)} | ${cell(c.when)} | ${cell(c.then)} | ${fmt(c.expected).replace(/\|/g, '\\|')} |`);
   }
   L.push('');
   const counts = {};
