@@ -1,0 +1,1305 @@
+# ケース表の正本。人が読むのは cases.md（このファイルから自動生成）。
+# 実装フェーズでは AI はこのファイルを変更できない（hook と CI のロック検査）。
+spec: "#9"
+title: パックライスの予約一覧・上限通知
+risk: 中
+target: src/packrice.js#buildReservationPlan
+decisions:
+  - id: D9-1
+    text: 受付時間（7:00〜10:30）はフォームの有効化・無効化のトリガーで制御する。集計側では時間で絞らない（時間外のタイムスタンプでも除外しない）。
+    source: 回答B1
+  - id: D9-2
+    text: 同じメールアドレスの回答は最初の1件だけを一覧に出す。2件目以降は一覧に出さず、上限にも数えない。
+    source: 回答B2
+  - id: D9-3
+    text: フォームのプルダウンは管理シートの拠点名の列から作る。万が一マスターにない拠点名の回答があれば、一覧に出さず xl-system-alert に通知する。
+    source: 回答B3
+  - id: D9-4
+    text: 上限に達している（有効な予約者数が配布個数以上）なら、集計を実行するたびに、その拠点の通知先チャンネルへ「本日の予約分は終了しました」を送る（再送を抑えない）。
+    source: 回答B4
+  - id: D9-5
+    text: 日次の洗い替えは、フォームと集計スプレッドシートを日付付きで新規作成する。旧ファイルは残す。
+    source: 回答B5
+  - id: D9-6
+    text: 管理シートに不正な行（拠点名が未入力／配布個数が未入力または1未満／通知先が未入力または存在しない）があるとき、その拠点だけ処理しない（シートも出さず、上限通知も送らず）。xl-system-alert に通知し、正常な拠点は通常どおり処理する。
+    source: 回答B6
+  - id: D9-7
+    text: 回答シート（フォーム）が毎日新しくなっても、予約者が使うURLは常に1つにする。そのURLにアクセスすると、当日のフォームへ転送する。
+    source: 追加の仕様（Issueコメント）
+assumptions:
+  - id: A9-1
+    text: 重複の判定は、拠点をまたいでメールアドレス単位で行う。回答シートの行の順を受付順とし、最初に出てきた行を採用する。
+  - id: A9-2
+    text: 拠点名はマスターと完全一致で比べる。前後の空白や全角半角の違いは別の拠点名として扱い、不一致として通知する（プルダウンから作るので、違いは異常とみなす）。
+  - id: A9-3
+    text: 回答の氏名またはメールアドレスが空の行があれば、全体を止めて何も書かない（フォームの必須項目が壊れている異常として扱う）。
+  - id: A9-4
+    text: すべての列が空の行は、回答シート・管理シートとも無視する。
+  - id: A9-5
+    text: 配布個数は1以上の整数の数値だけを有効とする。数値でない値、小数は不正な行として扱う。
+  - id: A9-6
+    text: 管理シートで同じ拠点名が複数行ある場合、該当するすべての行を不正として処理しない。
+  - id: A9-7
+    text: フォームの選択肢は、拠点名が空でない行を管理シートの順に並べ、重複は1つにする。配布個数や通知先が不正な拠点も選択肢には含める（通知は管理シート側の不正の通知で行う）。
+  - id: A9-8
+    text: 管理シートの不正な拠点宛の回答は、追加の通知なしで除外する（管理シートの不正で既に通知しているため）。通知の宛先は固定の xl-system-alert で、純粋関数は通知の種類と行番号だけを返す。
+  - id: A9-9
+    text: 固定URLは Apps Script のウェブアプリとして用意し、新しいフォームを作るたびに当日のフォームの公開URLを保存して、アクセス時にそこへ転送する。転送先が未設定・空白だけ・Googleフォーム（https://docs.google.com/forms/ で始まる）以外のときは転送せず、「受付準備中」を表示して xl-system-alert に通知する（任意のURLへの転送を防ぐ）。純粋関数は転送先か、エラーの種類だけを返す。
+boundaries:
+  - name: 配布個数の下限（1未満は不正）
+    points:
+      - value: 0（不正）
+        case: TC9-21
+      - value: 1（ちょうど有効）
+        case: TC9-06
+      - value: 2（すぐ内側）
+        case: TC9-02
+  - name: 予約件数と上限（上限2の場合）
+    points:
+      - value: 上限-1（1件。通知なし）
+        case: TC9-02
+      - value: 上限ちょうど（2件。通知）
+        case: TC9-03
+      - value: 上限+1（3件。3件目は出さない）
+        case: TC9-04
+      - value: 0件
+        case: TC9-05
+  - name: 同じメールアドレスの回答数
+    points:
+      - value: 1件（重複なし）
+        case: TC9-01
+      - value: 2件
+        case: TC9-07
+      - value: 3件以上
+        case: TC9-08
+      - value: 別フロアで重複
+        case: TC9-09
+  - name: 拠点名の一致（文字列）
+    points:
+      - value: 完全一致
+        case: TC9-01
+      - value: 後ろに空白
+        case: TC9-12
+      - value: 全角と半角
+        case: TC9-13
+      - value: 空文字
+        case: TC9-14
+      - value: マスターにない名前
+        case: TC9-11
+  - name: 拠点の数
+    points:
+      - value: 0拠点（ヘッダーのみ）
+        case: TC9-31
+      - value: 1拠点
+        case: TC9-02
+      - value: 2拠点以上
+        case: TC9-01
+      - value: 全拠点が不正
+        case: TC9-29
+  - name: 通知先チャンネル
+    points:
+      - value: 存在する
+        case: TC9-03
+      - value: 未入力
+        case: TC9-26
+      - value: 存在しない
+        case: TC9-27
+  - name: 受付時間（フォーム側で制御）
+    points:
+      - value: 7:00より前（6:59）も除外しない
+        case: TC9-10
+      - value: 10:30より後（10:31）も除外しない
+        case: TC9-10
+  - name: 管理シートの拠点名の重複
+    points:
+      - value: 重複なし
+        case: TC9-01
+      - value: 同じ拠点名が2行
+        case: TC9-28
+  - name: フォームURLの入力（固定URLの転送先）
+    points:
+      - value: 正常なURL
+        case: TC9-36
+      - value: 前後に空白があるURL
+        case: TC9-37
+      - value: 空文字
+        case: TC9-38
+      - value: 空白だけ
+        case: TC9-39
+      - value: Googleフォーム以外のURL
+        case: TC9-40
+manual_checks:
+  - id: M9-01
+    item: フォームの有効化・無効化のトリガーが 7:00 と 10:30 に動く
+    when: リリース初日
+  - id: M9-02
+    item: 上限到達時に、拠点ごとの通知先チャンネルへ「本日の予約分は終了しました」が届く。不正・不一致の通知が xl-system-alert に届く
+    when: 検証用 Slack で1回
+  - id: M9-03
+    item: 毎日、フォームと「パックライス予約一覧（YYYY-MM-DD）」が新規に作られ、旧ファイルが残る。閲覧シートは利用者が編集できず、編集は総務部とシステム管理者だけ
+    when: リリース初日
+  - id: M9-05
+    item: 固定URLにアクセスすると当日のフォームが開く。翌日にフォームが作り直されても、同じURLで新しい当日のフォームが開く。転送先が未設定のときは「受付準備中」が表示される
+    when: リリース初日と翌日
+  - id: M9-04
+    item: フォームの拠点のプルダウンが管理シートの拠点名と一致し、氏名がメールアドレスから自動設定される
+    when: 検証用フォームで1回
+cases:
+  - id: TC9-01
+    spec_ref: ルール 拠点ごとにシートを分ける, 例1
+    viewpoint: 正常
+    title: 拠点ごとに回答を振り分けて一覧にする
+    given: 本社24F（上限3）に2件、大阪支店（上限2）に1件の回答
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F は回答順に2件、大阪支店は1件。どちらも上限未満なので通知なし
+    input:
+      fn: plan
+      master:
+        - &a1
+          - 拠点名
+          - 配布個数
+          - 通知先のチャンネル名
+        - - 本社24F
+          - 3
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - &a2
+          - タイムスタンプ
+          - 氏名
+          - メールアドレス
+          - フロア名
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+        - - 07:03:00
+          - 予約次郎
+          - jiro@t.jp
+          - 本社24F
+      channels: &a3
+        - 本社-24F
+        - 大阪支店
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - &a4
+              - 予約太郎
+              - taro@t.jp
+            - - 予約次郎
+              - jiro@t.jp
+          notify: null
+        - name: 大阪支店
+          rows:
+            - &a5
+              - 予約花子
+              - hanako@t.jp
+          notify: null
+      alerts: []
+  - id: TC9-02
+    spec_ref: ルール 上限を上回った行は表示しない
+    viewpoint: 境界値
+    title: 上限より1件少ないときは通知しない
+    given: 上限2の拠点に1件の回答
+    when: 管理シートと回答シートで集計を実行
+    then: 1件が出る。上限通知なし
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: null
+      alerts: []
+  - id: TC9-03
+    spec_ref: ルール 上限を上回った行は表示しない, 決定D9-4
+    viewpoint: 境界値
+    title: 上限ちょうどの件数で上限通知を出す
+    given: 上限2の拠点に2件の回答
+    when: 管理シートと回答シートで集計を実行
+    then: 2件が出る。上限に達したので 本社-24F に通知する
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+            - *a5
+          notify: 本社-24F
+      alerts: []
+  - id: TC9-04
+    spec_ref: ルール 上限を上回った行は表示しない, 決定D9-4
+    viewpoint: 境界値
+    title: 上限を超えた3件目は一覧に出さない
+    given: 上限2の拠点に3件の回答
+    when: 管理シートと回答シートで集計を実行
+    then: 先着の2件だけが出る。3件目は出ない。上限通知は出す
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 本社24F
+        - - 07:03:00
+          - 予約次郎
+          - jiro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+            - *a5
+          notify: 本社-24F
+      alerts: []
+  - id: TC9-05
+    spec_ref: 入力 拠点ごとのシート
+    viewpoint: 境界値
+    title: 回答が0件の拠点は空の一覧にする
+    given: 上限2の拠点に回答が0件
+    when: 管理シートと回答シートで集計を実行
+    then: 一覧は0件。上限通知なし
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+      responses:
+        - *a2
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows: []
+          notify: null
+      alerts: []
+  - id: TC9-06
+    spec_ref: 異常時の挙動 配布個数は1以上
+    viewpoint: 境界値
+    title: 上限1の拠点は1件で上限通知を出す
+    given: 上限1の拠点に1件の回答
+    when: 管理シートと回答シートで集計を実行
+    then: 1件が出る。上限に達したので通知する
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 1
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: 本社-24F
+      alerts: []
+  - id: TC9-07
+    spec_ref: 決定D9-2
+    viewpoint: 重複
+    title: 同じメールアドレスの2件目は一覧にも上限にも数えない
+    given: 上限2の拠点に、太郎・太郎・花子の順で3件の回答
+    when: 管理シートと回答シートで集計を実行
+    then: 太郎（最初の1件）と花子の2件が出る。重複は1人として数えるので上限に達し通知する
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:03:00
+          - 予約花子
+          - hanako@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+            - *a5
+          notify: 本社-24F
+      alerts: []
+  - id: TC9-08
+    spec_ref: 決定D9-2
+    viewpoint: 重複
+    title: 同じメールアドレスが3件あっても最初の1件だけ出す
+    given: 上限2の拠点に、同じ太郎の回答が3件
+    when: 管理シートと回答シートで集計を実行
+    then: 太郎の1件だけが出る。上限未満なので通知なし
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:03:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: null
+      alerts: []
+  - id: TC9-09
+    spec_ref: 決定D9-2, 仮定A9-1
+    viewpoint: 重複
+    title: 別のフロアでも同じメールアドレスは最初の1件だけ
+    given: 本社24F と 大阪支店 に同じ太郎の回答が1件ずつ（本社24F が先）
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F に太郎が出る。大阪支店は0件
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+        - - 大阪支店
+          - 3
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約太郎
+          - taro@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: null
+        - name: 大阪支店
+          rows: []
+          notify: null
+      alerts: []
+  - id: TC9-10
+    spec_ref: 決定D9-1
+    viewpoint: 正常
+    title: 受付時間外のタイムスタンプでも一覧から除かない
+    given: 上限3の拠点に、6:59 と 10:31 のタイムスタンプの回答
+    when: 管理シートと回答シートで集計を実行
+    then: 時間で絞らず、2件とも回答順に出る
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 06:59:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 10:31:00
+          - 予約花子
+          - hanako@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+            - *a5
+          notify: null
+      alerts: []
+  - id: TC9-11
+    spec_ref: 決定D9-3
+    viewpoint: 異常値
+    title: マスターにない拠点名の回答は一覧に出さず通知する
+    given: 本社24F の回答1件と、本社99F の回答1件（回答シートの3行目）
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F の1件だけが出る。3行目について UNKNOWN_SITE を xl-system-alert に通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 本社99F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: null
+      alerts:
+        - code: UNKNOWN_SITE
+          row: 3
+  - id: TC9-12
+    spec_ref: 決定D9-3, 仮定A9-2
+    viewpoint: 境界値
+    title: 拠点名の後ろに空白がある回答は不一致として通知する
+    given: 「本社24F 」（後ろに半角空白）の回答が回答シートの2行目
+    when: 管理シートと回答シートで集計を実行
+    then: どの拠点にも出さず、2行目について UNKNOWN_SITE を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - "本社24F "
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows: []
+          notify: null
+      alerts:
+        - code: UNKNOWN_SITE
+          row: 2
+  - id: TC9-13
+    spec_ref: 決定D9-3, 仮定A9-2
+    viewpoint: 境界値
+    title: 全角の拠点名の回答は不一致として通知する
+    given: 「本社２４F」（数字が全角）の回答が回答シートの2行目
+    when: 管理シートと回答シートで集計を実行
+    then: どの拠点にも出さず、2行目について UNKNOWN_SITE を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社２４F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows: []
+          notify: null
+      alerts:
+        - code: UNKNOWN_SITE
+          row: 2
+  - id: TC9-14
+    spec_ref: 決定D9-3
+    viewpoint: 空の値
+    title: フロア名が空の回答は通知する
+    given: フロア名が空の回答が回答シートの2行目
+    when: 管理シートと回答シートで集計を実行
+    then: どの拠点にも出さず、2行目について UNKNOWN_SITE を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - ""
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows: []
+          notify: null
+      alerts:
+        - code: UNKNOWN_SITE
+          row: 2
+  - id: TC9-15
+    spec_ref: 仮定A9-3
+    viewpoint: 空の値
+    title: 氏名が空の回答があれば全体を止める
+    given: 氏名が空の回答が1件
+    when: 管理シートと回答シートで集計を実行
+    then: INVALID_VALUE のエラー。何も書かない
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - ""
+          - x@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      error: INVALID_VALUE
+  - id: TC9-16
+    spec_ref: 仮定A9-3
+    viewpoint: 空の値
+    title: メールアドレスが空の回答があれば全体を止める
+    given: メールアドレスが空の回答が1件
+    when: 管理シートと回答シートで集計を実行
+    then: INVALID_VALUE のエラー。何も書かない
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - ""
+          - 本社24F
+      channels: *a3
+    expected:
+      error: INVALID_VALUE
+  - id: TC9-17
+    spec_ref: 仮定A9-4
+    viewpoint: 空の値
+    title: 回答シートのすべて空の行は無視する
+    given: 回答1件のあとに空行が2行
+    when: 管理シートと回答シートで集計を実行
+    then: 空行はエラーにならず、1件だけが出る
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - ""
+          - ""
+          - ""
+          - ""
+        - - ""
+          - ""
+          - ""
+          - ""
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: null
+      alerts: []
+  - id: TC9-18
+    spec_ref: 異常時の挙動 シートの破損
+    viewpoint: シートの破損
+    title: 回答シートの必要なヘッダーがなければ止める
+    given: 回答シートの「メールアドレス」列が「メール」に変わっている
+    when: 管理シートと回答シートで集計を実行
+    then: HEADER_MISSING のエラー。何も書かない
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - - タイムスタンプ
+          - 氏名
+          - メール
+          - フロア名
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      error: HEADER_MISSING
+  - id: TC9-19
+    spec_ref: 異常時の挙動 シートの破損
+    viewpoint: シートの破損
+    title: 管理シートの必要なヘッダーがなければ止める
+    given: 管理シートの「配布個数」列が「個数」に変わっている
+    when: 管理シートと回答シートで集計を実行
+    then: HEADER_MISSING のエラー。何も書かない
+    input:
+      fn: plan
+      master:
+        - - 拠点名
+          - 個数
+          - 通知先のチャンネル名
+        - - 本社24F
+          - 3
+          - 本社-24F
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      error: HEADER_MISSING
+  - id: TC9-20
+    spec_ref: 仕様 入力
+    viewpoint: シートの破損
+    title: 列の順序が違ってもヘッダー名で列を特定する
+    given: 管理シートと回答シートの列の並びが基準と異なる
+    when: 管理シートと回答シートで集計を実行
+    then: 列の位置に関係なく、本社24F に太郎が出る
+    input:
+      fn: plan
+      master:
+        - - 通知先のチャンネル名
+          - 拠点名
+          - 配布個数
+        - - 本社-24F
+          - 本社24F
+          - 3
+      responses:
+        - - フロア名
+          - メールアドレス
+          - 氏名
+          - タイムスタンプ
+        - - 本社24F
+          - taro@t.jp
+          - 予約太郎
+          - 07:01:00
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: null
+      alerts: []
+  - id: TC9-21
+    spec_ref: 異常時の挙動 配布個数は1以上, 決定D9-6
+    viewpoint: 境界値
+    title: 配布個数が0の拠点だけ処理せず通知する
+    given: 本社24F の配布個数が0（管理シートの2行目）、大阪支店は正常。両方に回答あり
+    when: 管理シートと回答シートで集計を実行
+    then: 大阪支店は通常どおり出る。本社24F は出さず通知もせず、2行目について MASTER_INVALID を通知。本社24F宛の回答は追加の通知なしで除外
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 0
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+  - id: TC9-22
+    spec_ref: 異常時の挙動 配布個数は未入力不可, 決定D9-6
+    viewpoint: 空の値
+    title: 配布個数が未入力の拠点は処理しない
+    given: 本社24F の配布個数が空（2行目）
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F は出さず、2行目について MASTER_INVALID を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - ""
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+  - id: TC9-23
+    spec_ref: 異常時の挙動 配布個数, 仮定A9-5
+    viewpoint: 異常値
+    title: 配布個数が数値でない拠点は処理しない
+    given: 本社24F の配布個数が「百」（2行目）
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F は出さず、2行目について MASTER_INVALID を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 百
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+  - id: TC9-24
+    spec_ref: 異常時の挙動 配布個数, 仮定A9-5
+    viewpoint: 異常値
+    title: 配布個数が整数でない拠点は処理しない
+    given: 本社24F の配布個数が 2.5（2行目）
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F は出さず、2行目について MASTER_INVALID を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2.5
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+  - id: TC9-25
+    spec_ref: 異常時の挙動 拠点名は未入力不可, 決定D9-6
+    viewpoint: 空の値
+    title: 拠点名が未入力の行は処理せず通知する
+    given: 拠点名が空で配布個数5・通知先ありの行（2行目）
+    when: 管理シートと回答シートで集計を実行
+    then: その行は出さず、2行目について MASTER_INVALID を通知。大阪支店は通常どおり
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - ""
+          - 5
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+  - id: TC9-26
+    spec_ref: 異常時の挙動 通知先は未入力不可, 決定D9-6
+    viewpoint: 空の値
+    title: 通知先チャンネルが未入力の拠点は処理しない
+    given: 本社24F の通知先が空（2行目）
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F は出さず、2行目について MASTER_INVALID を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - ""
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+  - id: TC9-27
+    spec_ref: 異常時の挙動 存在しないチャンネル, 決定D9-6
+    viewpoint: 異常値
+    title: 存在しないチャンネル名の拠点は処理しない
+    given: 本社24F の通知先が存在しないチャンネル「honsha-xx」（2行目）
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F は出さず、2行目について MASTER_INVALID を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - honsha-xx
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+  - id: TC9-28
+    spec_ref: 仮定A9-6, 決定D9-6
+    viewpoint: 重複
+    title: 管理シートで拠点名が重複している行はすべて処理しない
+    given: 本社24F が2行（2行目と3行目）、大阪支店は正常
+    when: 管理シートと回答シートで集計を実行
+    then: 本社24F は出さず、2行目と3行目について MASTER_INVALID を通知。大阪支店は通常どおり
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+        - - 本社24F
+          - 5
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+        - - 07:02:00
+          - 予約花子
+          - hanako@t.jp
+          - 大阪支店
+      channels: *a3
+    expected:
+      sites:
+        - name: 大阪支店
+          rows:
+            - *a5
+          notify: null
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+        - code: MASTER_INVALID
+          row: 3
+  - id: TC9-29
+    spec_ref: 決定D9-6
+    viewpoint: 境界値
+    title: すべての拠点が不正なら何も出さずに通知する
+    given: 2拠点とも不正（配布個数0／通知先が空）
+    when: 管理シートと回答シートで集計を実行
+    then: 拠点シートは0件。2行目と3行目について MASTER_INVALID を通知
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 0
+          - 本社-24F
+        - - 大阪支店
+          - 2
+          - ""
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites: []
+      alerts:
+        - code: MASTER_INVALID
+          row: 2
+        - code: MASTER_INVALID
+          row: 3
+  - id: TC9-30
+    spec_ref: 仮定A9-4
+    viewpoint: 空の値
+    title: 管理シートのすべて空の行は無視する
+    given: 管理シートの正常な1行のあとに空行が2行
+    when: 管理シートと回答シートで集計を実行
+    then: 空行は通知せず、本社24F が通常どおり出る
+    input:
+      fn: plan
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+        - - ""
+          - ""
+          - ""
+        - - ""
+          - ""
+          - ""
+      responses:
+        - *a2
+        - - 07:01:00
+          - 予約太郎
+          - taro@t.jp
+          - 本社24F
+      channels: *a3
+    expected:
+      sites:
+        - name: 本社24F
+          rows:
+            - *a4
+          notify: null
+      alerts: []
+  - id: TC9-31
+    spec_ref: 入力 管理シート
+    viewpoint: 境界値
+    title: 管理シートがヘッダーだけなら拠点0件で何も出さない
+    given: 管理シートにデータ行がなく、回答もない
+    when: 管理シートと回答シートで集計を実行
+    then: 拠点シートは0件、通知もなし
+    input:
+      fn: plan
+      master:
+        - *a1
+      responses:
+        - *a2
+      channels: *a3
+    expected:
+      sites: []
+      alerts: []
+  - id: TC9-32
+    spec_ref: 決定D9-3
+    viewpoint: 正常
+    title: 管理シートの拠点名からフォームの選択肢を作る
+    given: 管理シートに本社24F、本社25F、大阪支店の順
+    when: 選択肢を作成
+    then: 管理シートの並び順で3つの選択肢
+    input:
+      fn: choices
+      master:
+        - *a1
+        - - 本社24F
+          - 3
+          - 本社-24F
+        - - 本社25F
+          - 5
+          - 本社-25F
+        - - 大阪支店
+          - 2
+          - 大阪支店
+    expected:
+      choices:
+        - 本社24F
+        - 本社25F
+        - 大阪支店
+  - id: TC9-33
+    spec_ref: 決定D9-3, 仮定A9-7
+    viewpoint: 重複
+    title: 選択肢は拠点名が空の行と空行を除き、重複は1つにする
+    given: 拠点名が空の行、空行、同じ拠点名の2行、配布個数が不正な拠点の行がある
+    when: 選択肢を作成
+    then: 空を除き、重複は1つ。配布個数が不正な拠点も選択肢に含める
+    input:
+      fn: choices
+      master:
+        - *a1
+        - - 本社24F
+          - 2
+          - 本社-24F
+        - - ""
+          - 5
+          - x
+        - - ""
+          - ""
+          - ""
+        - - 本社24F
+          - 5
+          - 本社-24F
+        - - 大阪支店
+          - 0
+          - ""
+    expected:
+      choices:
+        - 本社24F
+        - 大阪支店
+  - id: TC9-34
+    spec_ref: 異常時の挙動 シートの破損
+    viewpoint: シートの破損
+    title: 選択肢の作成でも拠点名のヘッダーがなければ止める
+    given: 「拠点名」列が「名称」に変わっている
+    when: 選択肢を作成
+    then: HEADER_MISSING のエラー
+    input:
+      fn: choices
+      master:
+        - - 名称
+          - 配布個数
+          - 通知先のチャンネル名
+        - - 本社24F
+          - 3
+          - 本社-24F
+    expected:
+      error: HEADER_MISSING
+  - id: TC9-35
+    spec_ref: 出力先, 決定D9-5
+    viewpoint: 正常
+    title: 集計スプレッドシートのタイトルに生成日を入れる
+    given: 日付 2026-11-21
+    when: タイトルを作成
+    then: 「パックライス予約一覧（2026-11-21）」（全角カッコ）
+    input:
+      fn: title
+      today: 2026-11-21
+    expected:
+      title: パックライス予約一覧（2026-11-21）
+  - id: TC9-36
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 正常
+    title: 保存されている当日のフォームURLへ転送する
+    given: 保存されているフォームURLが https://docs.google.com/forms/d/e/AAA/viewform
+    when: 固定URLにアクセス
+    then: https://docs.google.com/forms/d/e/AAA/viewform へ転送する
+    input:
+      fn: entry
+      formUrl: https://docs.google.com/forms/d/e/AAA/viewform
+    expected:
+      redirect: https://docs.google.com/forms/d/e/AAA/viewform
+  - id: TC9-37
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 境界値
+    title: 保存されたURLの前後の空白は取り除いて転送する
+    given: 保存されているフォームURLの前後に空白がある
+    when: 固定URLにアクセス
+    then: 空白を除いた https://docs.google.com/forms/d/e/AAA/viewform へ転送する
+    input:
+      fn: entry
+      formUrl: " https://docs.google.com/forms/d/e/AAA/viewform "
+    expected:
+      redirect: https://docs.google.com/forms/d/e/AAA/viewform
+  - id: TC9-38
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 空の値
+    title: 転送先が未設定なら転送せずエラーにする
+    given: 保存されているフォームURLが空文字
+    when: 固定URLにアクセス
+    then: FORM_URL_MISSING のエラー。転送しない
+    input:
+      fn: entry
+      formUrl: ""
+    expected:
+      error: FORM_URL_MISSING
+  - id: TC9-39
+    spec_ref: 決定D9-7, 仮定A9-9
+    viewpoint: 境界値
+    title: 空白だけの転送先は未設定として扱う
+    given: 保存されているフォームURLが半角空白だけ
+    when: 固定URLにアクセス
+    then: FORM_URL_MISSING のエラー。転送しない
+    input:
+      fn: entry
+      formUrl: "   "
+    expected:
+      error: FORM_URL_MISSING
+  - id: TC9-40
+    spec_ref: 仮定A9-9
+    viewpoint: 異常値
+    title: Googleフォーム以外のURLには転送しない
+    given: 保存されているURLが https://example.com/forms/d/e/AAA/viewform
+    when: 固定URLにアクセス
+    then: FORM_URL_INVALID のエラー。転送しない
+    input:
+      fn: entry
+      formUrl: https://example.com/forms/d/e/AAA/viewform
+    expected:
+      error: FORM_URL_INVALID
